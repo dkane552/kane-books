@@ -16,6 +16,44 @@ export const isSupabaseConfigured = Boolean(url && key);
 
 const isBrowser = typeof window !== "undefined";
 
+// An invite or password reset link signs you in without a password. Note which kind of link it was (read
+// before the client below takes the tokens out of the address) so the app asks for a new password first.
+const LINK_KEY = "kane-books.setPassword";
+export type PasswordLink = "invite" | "recovery";
+function readPasswordLink(): PasswordLink | null {
+  if (!isBrowser) return null;
+  try {
+    const t = new URLSearchParams(window.location.hash.slice(1)).get("type");
+    if (t === "invite" || t === "recovery") {
+      sessionStorage.setItem(LINK_KEY, t);
+      return t;
+    }
+    const kept = sessionStorage.getItem(LINK_KEY);
+    return kept === "invite" || kept === "recovery" ? kept : null;
+  } catch {
+    return null;
+  }
+}
+export const passwordLink: PasswordLink | null = readPasswordLink();
+export function clearPasswordLink() {
+  try {
+    sessionStorage.removeItem(LINK_KEY);
+  } catch {
+    // storage blocked: nothing kept
+  }
+}
+
+/** The error a sign-in link came back with (expired or already used), if any. */
+export const linkError: string | null = (() => {
+  if (!isBrowser) return null;
+  try {
+    const p = new URLSearchParams(window.location.hash.slice(1));
+    return p.get("error_description")?.replace(/\+/g, " ") ?? null;
+  } catch {
+    return null;
+  }
+})();
+
 export const supabase: SupabaseClient = createClient(url, key, {
   auth: {
     persistSession: isBrowser,

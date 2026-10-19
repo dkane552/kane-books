@@ -3,11 +3,18 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { Session } from "@supabase/supabase-js";
 import { Compass, Loader2, LogOut, ShieldAlert, PlugZap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import {
+  supabase,
+  isSupabaseConfigured,
+  passwordLink,
+  clearPasswordLink,
+  type PasswordLink,
+} from "@/lib/supabase";
 import type { AppUser } from "@/lib/types";
 import { useLiveRefresh } from "@/lib/data";
 import { CodePrompt } from "./security";
 import { SignedOutLogo } from "./brand";
+import { SetPasswordPage } from "./login";
 
 interface AuthState {
   ready: boolean;
@@ -19,6 +26,9 @@ interface AuthState {
   mfaChecked: boolean;
   /** The login has an authenticator app set up and this session has not entered its code yet. */
   needsCode: boolean;
+  /** Signed in from an invite or reset link: a password has to be set before anything else. */
+  needsPassword: PasswordLink | null;
+  passwordSet: () => void;
   signOut: () => Promise<void>;
 }
 
@@ -30,6 +40,8 @@ const AuthContext = createContext<AuthState>({
   memberChecked: false,
   mfaChecked: false,
   needsCode: false,
+  needsPassword: null,
+  passwordSet: () => {},
   signOut: async () => {},
 });
 
@@ -41,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [member, setMember] = useState<AppUser | null>(null);
   const [memberChecked, setMemberChecked] = useState(false);
   const [mfa, setMfa] = useState({ userId: "", checked: false, needsCode: false });
+  const [needsPassword, setNeedsPassword] = useState<PasswordLink | null>(passwordLink);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -51,7 +64,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       setReady(true);
     });
-    const { data } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    const { data } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === "PASSWORD_RECOVERY") setNeedsPassword("recovery");
+      setSession(s);
+    });
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -107,7 +123,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [email, mfaChecked, needsCode]);
 
   const signOut = async () => {
+    clearPasswordLink();
+    setNeedsPassword(null);
     await supabase.auth.signOut();
+  };
+  const passwordSet = () => {
+    clearPasswordLink();
+    setNeedsPassword(null);
   };
 
   // Live updates: changes from the bank feed or another device refresh what they touch.
@@ -123,6 +145,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         memberChecked,
         mfaChecked,
         needsCode,
+        needsPassword,
+        passwordSet,
         signOut,
       }}
     >
@@ -185,8 +209,18 @@ function takeReturn(): string | null {
 
 /** Shows the app only to signed-in team members; everything else gets the right screen. */
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { ready, session, member, memberChecked, mfaChecked, needsCode, email, signOut } =
-    useAuth();
+  const {
+    ready,
+    session,
+    member,
+    memberChecked,
+    mfaChecked,
+    needsCode,
+    needsPassword,
+    passwordSet,
+    email,
+    signOut,
+  } = useAuth();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const href = useRouterState({ select: (s) => s.location.href });
   const navigate = useNavigate();
@@ -202,12 +236,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (path !== "/") rememberReturn(href);
       navigate({ to: "/login" });
     }
-    if (session && onLogin && member) {
+    if (session && onLogin && member && !needsPassword) {
       const back = takeReturn();
       if (back) navigate({ href: back });
       else navigate({ to: "/" });
     }
-  }, [mounted, ready, session, onLogin, member, navigate, path, href]);
+  }, [mounted, ready, session, onLogin, member, needsPassword, navigate, path, href]);
 
   if (!mounted) return <Splash />;
 
@@ -226,6 +260,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (!ready) return <Splash />;
   if (session && !mfaChecked) return <Splash label="Checking access" />;
   if (session && needsCode) return <CodePrompt />;
+  if (session && needsPassword) {
+    return (
+      <SetPasswordPage
+        kind={needsPassword}
+        email={email}
+        onDone={() => {
+          passwordSet();
+          navigate({ to: "/" });
+        }}
+        onCancel={() => signOut()}
+      />
+    );
+  }
   if (onLogin) return <>{children}</>;
   if (!session) return <Splash label="Redirecting to sign in" />;
   if (!memberChecked) return <Splash label="Checking access" />;
