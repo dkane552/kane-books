@@ -1,2 +1,0 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/mvfeihm3/budget-BJejdsuN.js","assets/mvfeihm3/input-CA0CyXNb.js","assets/mvfeihm3/peek-CWbq5hjU.js","assets/mvfeihm3/useNavigate-Bt-DTDNd.js","assets/mvfeihm3/plus-WIfBEjU8.js"])))=>i.map(i=>d[i]);
-import{c as e,i as t,o as n,s as r,t as i}from"./search-BjrV49PZ.js";import{A as a}from"./peek-CWbq5hjU.js";var o=e(`/budget`)({head:()=>a(`Budget`),validateSearch:e=>i({month:t(e.month)}),component:r(()=>n(()=>import(`./budget-BJejdsuN.js`),__vite__mapDeps([0,1,2,3,4])),`component`)});export{o as t};
