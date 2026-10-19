@@ -1,0 +1,1 @@
+import{n as e}from"./useNavigate-Bt-DTDNd.js";function t(t){return e({from:t.from,strict:t.strict,shouldThrow:t.shouldThrow,structuralSharing:t.structuralSharing,select:e=>t.select?t.select(e.search):e.search})}export{t};

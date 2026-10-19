@@ -1,0 +1,1 @@
+import{v as e}from"./input-CA0CyXNb.js";import{n as t,t as n}from"./accounts-D-jWSbCJ.js";var r=e();function i(){let{tab:e,account:i}=n.useSearch(),a=n.useNavigate();return(0,r.jsx)(t,{tab:e??`Balances`,account:i,onTab:e=>a({search:{tab:e},resetScroll:!1})})}export{i as component};
