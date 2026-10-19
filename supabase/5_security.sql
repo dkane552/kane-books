@@ -78,6 +78,17 @@ begin
   end loop;
 end $$;
 
+-- Pin the search path on the small helpers (Supabase security advisor).
+alter function public.keepalive() set search_path = public;
+alter function public.current_actor() set search_path = public;
+alter function public.ledger_locks_apply() set search_path = public;
+alter function public.is_reconciled(text, uuid) set search_path = public;
+alter function public.gl_account_sort(text, text) set search_path = public;
+alter function public.pl_section(text) set search_path = public;
+alter function public.cadence_interval(text) set search_path = public;
+alter function public.cadence_monthly(text, numeric) set search_path = public;
+alter function public.merchant_key(text, text) set search_path = public;
+
 -- Check: anon can read no tables (expect 0).
 select count(*) filter (where has_table_privilege('anon', c.oid, 'select')) as anon_readable_tables
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
