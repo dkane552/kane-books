@@ -1031,12 +1031,18 @@ returns int language plpgsql set search_path = public as $$
 declare
   x record; v_match uuid; v_n int;
 begin
+  -- Era can return the same transaction twice in one read (it moves between pages while paging), so each
+  -- era_id is taken once; the last copy wins.
   for x in
-    select e->>'era_id' as era_id, (e->>'txn_date')::date as txn_date, (e->>'amount')::numeric as amount
-    from jsonb_array_elements(p_rows) e
-    where (e->>'amount')::numeric <> 0
-      and not exists (select 1 from public.bank_transactions b where b.era_id = e->>'era_id')
-    order by 2
+    select * from (
+      select distinct on (e->>'era_id') e->>'era_id' as era_id, (e->>'txn_date')::date as txn_date,
+             (e->>'amount')::numeric as amount
+      from jsonb_array_elements(p_rows) with ordinality as j(e, i)
+      where (e->>'amount')::numeric <> 0
+        and not exists (select 1 from public.bank_transactions b where b.era_id = e->>'era_id')
+      order by e->>'era_id', i desc
+    ) d
+    order by d.txn_date
   loop
     select b.id into v_match
     from public.bank_transactions b
@@ -1050,11 +1056,13 @@ begin
   end loop;
 
   with r as (
-    select e->>'era_id' as era_id, (e->>'txn_date')::date as txn_date, (e->>'amount')::numeric as amount,
+    select distinct on (e->>'era_id')
+           e->>'era_id' as era_id, (e->>'txn_date')::date as txn_date, (e->>'amount')::numeric as amount,
            e->>'description' as description, e->>'original_description' as original_description,
            e->>'merchant' as merchant, e->>'era_category' as era_category, e->>'transfer_era_id' as transfer_era_id
-    from jsonb_array_elements(p_rows) e
+    from jsonb_array_elements(p_rows) with ordinality as j(e, i)
     where (e->>'amount')::numeric <> 0
+    order by e->>'era_id', i desc
   ), up as (
     insert into public.bank_transactions as b (era_id, feed_account_id, txn_date, amount, description,
       original_description, merchant, era_category, transfer_era_id)

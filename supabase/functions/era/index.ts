@@ -141,50 +141,60 @@ async function sync(by: string) {
                   updated_at = now() where id = ${f.id}`;
     }
 
+    // One account failing (a bank that needs reconnecting, say) never stops the others.
+    const failed: string[] = [];
     for (const f of feeds.filter((x: Row) => !x.balance_only)) {
-      const floor = settings?.bank_feed_start_date ? new Date(settings.bank_feed_start_date) : null;
-      let from = f.last_synced_at
-        ? new Date(f.last_synced_at)
-        : (floor ?? new Date(Date.now() - 30 * 864e5));
-      from = new Date(from.getTime() - (f.last_synced_at ? OVERLAP_DAYS * 864e5 : 0));
-      if (floor && from < floor) from = floor;
-      const rows: Row[] = [];
-      for (let page = 1; page < 100; page++) {
-        // Parameter names exactly as in Era's OpenAPI document (forge.era.app/api/openapi/public.json).
-        const r = await era("/banking/transactions", {
-          AccountId: f.era_account_key,
-          FromDate: day(from),
-          ToDate: today,
-          IncludePending: false,
-          Page: page,
-          PageSize: 100,
-          SortBy: "transactionDate",
-          SortDirection: "asc",
-        });
-        for (const t of r.transactions ?? []) {
-          if (t.isPending || !t.id || t.accountGroupKey !== f.era_account_key) continue;
-          const amount = Math.abs(Number(t.amount)) * (t.isCashOutflow ? -1 : 1);
-          if (!amount) continue;
-          rows.push({
-            era_id: t.id,
-            txn_date: t.postedDate ?? t.transactionDate,
-            amount: Math.round(amount * 100) / 100,
-            description: t.description ?? null,
-            original_description: t.originalDescription ?? t.description ?? null,
-            merchant: t.merchantName ?? null,
-            era_category: t.category ?? null,
-            transfer_era_id: t.transferLink?.linkedTransactionId ?? null,
+      try {
+        const floor = settings?.bank_feed_start_date
+          ? new Date(settings.bank_feed_start_date)
+          : null;
+        let from = f.last_synced_at
+          ? new Date(f.last_synced_at)
+          : (floor ?? new Date(Date.now() - 30 * 864e5));
+        from = new Date(from.getTime() - (f.last_synced_at ? OVERLAP_DAYS * 864e5 : 0));
+        if (floor && from < floor) from = floor;
+        // Keyed by Era's id: a transaction can show up on two pages while paging.
+        const byId = new Map<string, Row>();
+        for (let page = 1; page < 100; page++) {
+          // Parameter names exactly as in Era's OpenAPI document (forge.era.app/api/openapi/public.json).
+          const r = await era("/banking/transactions", {
+            AccountId: f.era_account_key,
+            FromDate: day(from),
+            ToDate: today,
+            IncludePending: false,
+            Page: page,
+            PageSize: 100,
+            SortBy: "transactionDate",
+            SortDirection: "asc",
           });
+          for (const t of r.transactions ?? []) {
+            if (t.isPending || !t.id || t.accountGroupKey !== f.era_account_key) continue;
+            const amount = Math.abs(Number(t.amount)) * (t.isCashOutflow ? -1 : 1);
+            if (!amount) continue;
+            byId.set(String(t.id), {
+              era_id: t.id,
+              txn_date: t.postedDate ?? t.transactionDate,
+              amount: Math.round(amount * 100) / 100,
+              description: t.description ?? null,
+              original_description: t.originalDescription ?? t.description ?? null,
+              merchant: t.merchantName ?? null,
+              era_category: t.category ?? null,
+              transfer_era_id: t.transferLink?.linkedTransactionId ?? null,
+            });
+          }
+          if (!r.pagination || page >= (r.pagination.totalPages ?? 1)) break;
         }
-        if (!r.pagination || page >= (r.pagination.totalPages ?? 1)) break;
+        const rows = [...byId.values()];
+        fetched += rows.length;
+        if (rows.length) {
+          const [n] =
+            await sql`select public.bank_upsert_transactions(${f.id}, ${sql.json(rows)}) as n`;
+          changed += Number(n?.n ?? 0);
+        }
+        await sql`update public.bank_feed_accounts set last_synced_at = now(), updated_at = now() where id = ${f.id}`;
+      } catch (e) {
+        failed.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
-      fetched += rows.length;
-      if (rows.length) {
-        const [n] =
-          await sql`select public.bank_upsert_transactions(${f.id}, ${sql.json(rows)}) as n`;
-        changed += Number(n?.n ?? 0);
-      }
-      await sql`update public.bank_feed_accounts set last_synced_at = now(), updated_at = now() where id = ${f.id}`;
     }
 
     const [auto] = await sql`select public.bank_autoprocess() as r`;
@@ -198,9 +208,10 @@ async function sync(by: string) {
       ...(r.added_by_rules ? [`${r.added_by_rules} added by rules`] : []),
       ...(valued ? [`${valued} ${valued === 1 ? "value" : "values"} updated`] : []),
     ].join(" · ");
-    await sql`update public.bank_feed_state set last_sync_at = now(), last_status = ${status}, last_error = null,
+    const problem = failed.length ? `Could not read ${failed.join("; ")}` : null;
+    await sql`update public.bank_feed_state set last_sync_at = now(), last_status = ${status}, last_error = ${problem},
               sync_started_at = null, updated_at = now() where id = 1`;
-    return { ok: true, status, by };
+    return { ok: true, status, by, ...(problem ? { warning: problem } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await sql`update public.bank_feed_state set last_sync_at = now(), last_error = ${msg}, sync_started_at = null,

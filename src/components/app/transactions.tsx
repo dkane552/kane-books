@@ -158,11 +158,16 @@ function BankFeedTab() {
         skipped?: boolean;
         error?: string;
         status?: string;
+        warning?: string;
       }>("sync");
       await db.batch(async () => undefined);
       if (!manual) return;
       if (r.error) toast.error("Bank sync failed", { description: r.error });
       else if (r.skipped) toast("A bank sync is already running");
+      else if (r.warning)
+        toast.warning("Bank feed updated, with a problem", {
+          description: `${r.status}. ${r.warning}`,
+        });
       else toast.success("Bank feed updated", { description: r.status });
     } catch (e) {
       if (manual) toast.error("Bank sync failed", { description: errMsg(e) });
