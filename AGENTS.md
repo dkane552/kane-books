@@ -20,8 +20,10 @@ Supabase project (`moszaslmoudygmxygzcf`, "Kane Books") and its own site. Nothin
 ## The books (`supabase/2_ledger.sql`)
 - Double entry. `gl_accounts.account_type`: what you own (Bank, Investment, Retirement, Property, Vehicle,
   Other Asset), what you owe (Credit Card, Loan, Mortgage, Other Liability), Equity, and categories (Income,
-  Expense, Other Income, Other Expense). `category_group` (Housing, Food, ...) groups categories for budgets
-  and reports. `tax_line` puts a category on the tax summary; `ledger_lines.tax_line` overrides one line.
+  Expense, Other Income, Other Expense). Personal categories only (no business ones), grouped like Era's own
+  (`category_group`: Housing, Daily living, Transportation, Lifestyle, Financial, Taxes, Other) for budgets and
+  reports. `era_category` names the Era category a category matches (Era tags every bank transaction). `tax_line`
+  puts a category on the tax summary; `ledger_lines.tax_line` overrides one line.
 - Every transaction is a `ledger_entries` row (expense, deposit, transfer, journal, valuation, opening) with
   `ledger_lines` (debit or credit, optional `project_id`). Save with
   `rpc("save_ledger_entry", { p_entry, p_lines })`; debits must equal credits (checked at commit).
@@ -45,8 +47,12 @@ Supabase project (`moszaslmoudygmxygzcf`, "Kane Books") and its own site. Nothin
   double up.
 - `bank_autoprocess()` matches each new transaction to one entry on that account with the same amount within
   5 days (a transfer entered from one side matches the other side), else applies the first `bank_rules` match
-  (suggestion, or added when `auto_add`). `bank_accept` makes one entry (split lines, category, project);
-  lines to a balance-sheet account make it a transfer. `bank_match`, `bank_exclude`, `bank_undo`.
+  (suggestion, or added when `auto_add`), else suggests from Era (`source` 'era transfer': the linked account
+  when Era paired it with a transaction on another linked account; 'era': the category whose `era_category`
+  matches, income categories only for money in). `bank_accept` makes one entry (split lines, category,
+  project); lines to a balance-sheet account make it a transfer. `bank_accept_many` adds a list in one call
+  (Add all categorized; a transfer whose other side is already in matches instead). `bank_match`,
+  `bank_exclude`, `bank_undo`. A sync takes each Era id once per read and keeps going past a failed account.
 - Investment and retirement accounts link `balance_only` with `auto_value`: the sync posts a valuation from
   Era's balance (`feed_auto_valuations`).
 - Transactions > Bank feed has a category picker and Add on every row, Add all categorized, and More for

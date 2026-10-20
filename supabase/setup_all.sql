@@ -1366,6 +1366,8 @@ begin
         select jsonb_build_object('gl_account_id', a.id, 'source', 'era') into v_sugg
         from public.gl_accounts a
         where a.is_active and lower(a.era_category) = lower(b.era_category)
+          -- an income category only for money coming in (Era tags some spending with an income category)
+          and not (a.account_type in ('Income','Other Income') and b.amount < 0)
         order by a.number nulls last limit 1;
       end if;
       -- Only replaces a suggestion that came from Era (a rule's stays until the rule goes).
