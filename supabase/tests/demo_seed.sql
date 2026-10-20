@@ -96,25 +96,25 @@ begin
   insert into public.bank_rules (contains, gl_account_id, payee_id, auto_add, direction) values
     ('SPYGLASS INC PAYROLL', (select id from public.gl_accounts where number = '4000'), public.payee_for('Spyglass Inc'), true, 'in'),
     ('ORLAND APTS', (select id from public.gl_accounts where number = '5010'), public.payee_for('Orland Apartments'), true, 'out'),
-    ('COMED', (select id from public.gl_accounts where number = '5110'), public.payee_for('ComEd'), true, 'out'),
-    ('XFINITY', (select id from public.gl_accounts where number = '5130'), public.payee_for('Xfinity'), true, 'out'),
-    ('VERIZON', (select id from public.gl_accounts where number = '5140'), public.payee_for('Verizon'), true, 'out'),
+    ('COMED', (select id from public.gl_accounts where number = '5030'), public.payee_for('ComEd'), true, 'out'),
+    ('XFINITY', (select id from public.gl_accounts where number = '5030'), public.payee_for('Xfinity'), true, 'out'),
+    ('VERIZON', (select id from public.gl_accounts where number = '5030'), public.payee_for('Verizon'), true, 'out'),
     ('ALLY AUTO', loan, public.payee_for('Ally'), true, 'out'),
     ('TRANSFER TO SAVINGS', (select id from public.gl_accounts where number = '1010'), null, true, 'out'),
     ('CHASE CREDIT CRD', crd, null, true, 'out'),
-    ('JEWEL OSCO', (select id from public.gl_accounts where number = '5210'), public.payee_for('Jewel-Osco'), true, 'out'),
-    ('MARIANOS', (select id from public.gl_accounts where number = '5210'), public.payee_for('Mariano''s'), true, 'out'),
-    ('PORTILLOS', (select id from public.gl_accounts where number = '5220'), public.payee_for('Portillo''s'), true, 'out'),
-    ('BUFFALO WILD', (select id from public.gl_accounts where number = '5220'), public.payee_for('Buffalo Wild Wings'), true, 'out'),
-    ('STARBUCKS', (select id from public.gl_accounts where number = '5230'), public.payee_for('Starbucks'), true, 'out'),
-    ('SHELL OIL', (select id from public.gl_accounts where number = '5310'), public.payee_for('Shell'), true, 'out'),
-    ('NETFLIX', (select id from public.gl_accounts where number = '5530'), public.payee_for('Netflix'), true, 'out'),
-    ('SPOTIFY', (select id from public.gl_accounts where number = '5530'), public.payee_for('Spotify'), true, 'out'),
-    ('LA FITNESS', (select id from public.gl_accounts where number = '5440'), public.payee_for('LA Fitness'), true, 'out');
+    ('JEWEL OSCO', (select id from public.gl_accounts where number = '5110'), public.payee_for('Jewel-Osco'), true, 'out'),
+    ('MARIANOS', (select id from public.gl_accounts where number = '5110'), public.payee_for('Mariano''s'), true, 'out'),
+    ('PORTILLOS', (select id from public.gl_accounts where number = '5120'), public.payee_for('Portillo''s'), true, 'out'),
+    ('BUFFALO WILD', (select id from public.gl_accounts where number = '5120'), public.payee_for('Buffalo Wild Wings'), true, 'out'),
+    ('STARBUCKS', (select id from public.gl_accounts where number = '5130'), public.payee_for('Starbucks'), true, 'out'),
+    ('SHELL OIL', (select id from public.gl_accounts where number = '5210'), public.payee_for('Shell'), true, 'out'),
+    ('NETFLIX', (select id from public.gl_accounts where number = '5320'), public.payee_for('Netflix'), true, 'out'),
+    ('SPOTIFY', (select id from public.gl_accounts where number = '5320'), public.payee_for('Spotify'), true, 'out'),
+    ('LA FITNESS', (select id from public.gl_accounts where number = '5330'), public.payee_for('LA Fitness'), true, 'out');
   insert into public.bank_rules (contains, gl_account_id, project_id, payee_id, auto_add, direction) values
     ('ETSY INC', (select id from public.gl_accounts where number = '4200'), (select id from public.projects where name = 'Venture City'), public.payee_for('Etsy'), true, 'in'),
-    ('CANVA', (select id from public.gl_accounts where number = '5920'), (select id from public.projects where name = 'Venture City'), public.payee_for('Canva'), true, 'out'),
-    ('PRINTFUL', (select id from public.gl_accounts where number = '5910'), (select id from public.projects where name = 'Venture City'), public.payee_for('Printful'), false, 'out');
+    ('CANVA', (select id from public.gl_accounts where number = '5320'), (select id from public.projects where name = 'Venture City'), public.payee_for('Canva'), true, 'out'),
+    ('PRINTFUL', (select id from public.gl_accounts where number = '5310'), (select id from public.projects where name = 'Venture City'), public.payee_for('Printful'), false, 'out');
 
   perform public.bank_import_statement(f_chk, rows);
   perform public.bank_import_statement(f_crd, crows);
@@ -135,11 +135,11 @@ begin
   end loop;
 
   -- Budgets.
-  for acct in select id, number from public.gl_accounts where number in ('5010','5110','5130','5140','5210','5220','5230','5310','5440','5530','5910') loop
+  for acct in select id, number from public.gl_accounts where number in ('5010','5030','5110','5120','5130','5210','5330','5320','5310') loop
     insert into public.budget_amounts (gl_account_id, month, amount)
-    values (acct.id, null, case acct.number when '5010' then 1650 when '5110' then 110 when '5130' then 65
-      when '5140' then 85 when '5210' then 450 when '5220' then 150 when '5230' then 30 when '5310' then 140
-      when '5440' then 40 when '5530' then 30 else 60 end);
+    values (acct.id, null, case acct.number when '5010' then 1650 when '5030' then 260
+      when '5110' then 450 when '5120' then 150 when '5130' then 30 when '5210' then 140
+      when '5330' then 40 when '5320' then 30 else 60 end);
   end loop;
   insert into public.budget_amounts (gl_account_id, month, amount)
   select id, null, 4900 from public.gl_accounts where number = '4000';
@@ -147,7 +147,7 @@ begin
   -- Recurring bills.
   insert into public.recurring_bills (name, amount, cadence, match_text, gl_account_id, is_income) values
     ('Rent', 1650, 'monthly', 'ORLAND APTS', (select id from public.gl_accounts where number = '5010'), false),
-    ('Netflix', 15.49, 'monthly', 'NETFLIX', (select id from public.gl_accounts where number = '5530'), false),
+    ('Netflix', 15.49, 'monthly', 'NETFLIX', (select id from public.gl_accounts where number = '5320'), false),
     ('Car payment', 412.37, 'monthly', 'ALLY AUTO', loan, false),
     ('Paycheck', 2450, 'semimonthly', 'SPYGLASS INC PAYROLL', (select id from public.gl_accounts where number = '4000'), true);
 end $$;

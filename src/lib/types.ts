@@ -72,6 +72,8 @@ export interface GlAccount {
   is_valued: boolean;
   category_group: string | null;
   tax_line: string | null;
+  /** Era's category this one matches; bank transactions Era tagged with it arrive with this filled in. */
+  era_category: string | null;
   description: string | null;
   institution: string | null;
   is_active: boolean;

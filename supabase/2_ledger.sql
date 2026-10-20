@@ -42,69 +42,74 @@ create table if not exists public.gl_accounts (
 );
 create unique index if not exists gl_accounts_number_key on public.gl_accounts(number) where number is not null;
 create unique index if not exists gl_accounts_name_key on public.gl_accounts(lower(name));
+-- The Era category a category matches: bank transactions Era tagged with it arrive with this category filled in.
+alter table public.gl_accounts add column if not exists era_category text;
 
--- Starting chart. Bank, card and investment accounts are added when they are linked to the bank feed
--- (or by hand in Accounts); the categories below can be renamed, merged or switched off.
-insert into public.gl_accounts (number, name, account_type, category_group, tax_line) values
-  ('1000','Checking','Bank',null,null),
-  ('1010','Savings','Bank',null,null),
-  ('1090','Cash on hand','Bank',null,null),
-  ('3000','Opening balance equity','Equity',null,null),
-  ('3900','Net worth carried forward','Equity',null,null),
-  ('4000','Paychecks','Income','Income','Wages (W-2)'),
-  ('4100','Business distributions','Income','Income','Business distributions (K-1)'),
-  ('4200','Side income','Income','Income',null),
-  ('4300','Interest','Income','Income','Interest income (1099-INT)'),
-  ('4400','Dividends','Income','Income','Dividends (1099-DIV)'),
-  ('4500','Refunds and reimbursements','Income','Income',null),
-  ('4600','Gifts received','Income','Income',null),
-  ('4900','Other income','Income','Income',null),
-  ('5010','Rent','Expense','Housing',null),
-  ('5020','Mortgage interest','Expense','Housing','Mortgage interest (Schedule A)'),
-  ('5030','Property taxes','Expense','Housing','State and local taxes (Schedule A)'),
-  ('5040','Home insurance','Expense','Housing',null),
-  ('5050','Home maintenance','Expense','Housing',null),
-  ('5060','Furniture and household','Expense','Housing',null),
-  ('5110','Electric and gas','Expense','Utilities',null),
-  ('5120','Water and trash','Expense','Utilities',null),
-  ('5130','Internet and TV','Expense','Utilities',null),
-  ('5140','Phone','Expense','Utilities',null),
-  ('5210','Groceries','Expense','Food',null),
-  ('5220','Restaurants','Expense','Food',null),
-  ('5230','Coffee','Expense','Food',null),
-  ('5310','Gas and fuel','Expense','Transportation',null),
-  ('5320','Auto insurance','Expense','Transportation',null),
-  ('5330','Auto maintenance','Expense','Transportation',null),
-  ('5340','Parking and tolls','Expense','Transportation',null),
-  ('5350','Rideshare and transit','Expense','Transportation',null),
-  ('5360','Auto loan interest','Expense','Transportation',null),
-  ('5410','Health insurance','Expense','Health','Medical (Schedule A)'),
-  ('5420','Doctor and dentist','Expense','Health','Medical (Schedule A)'),
-  ('5430','Pharmacy','Expense','Health','Medical (Schedule A)'),
-  ('5440','Fitness','Expense','Health',null),
-  ('5510','Clothing','Expense','Personal',null),
-  ('5520','Personal care','Expense','Personal',null),
-  ('5530','Subscriptions','Expense','Personal',null),
-  ('5540','Entertainment','Expense','Personal',null),
-  ('5550','Hobbies','Expense','Personal',null),
-  ('5560','Travel','Expense','Personal',null),
-  ('5570','Gifts given','Expense','Personal',null),
-  ('5580','Charitable giving','Expense','Personal','Charitable contributions (Schedule A)'),
-  ('5610','Bank and card fees','Expense','Financial',null),
-  ('5620','Interest paid','Expense','Financial',null),
-  ('5630','Tax prep and legal','Expense','Financial',null),
-  ('5710','Courses and licenses','Expense','Education',null),
-  ('5720','Books and learning','Expense','Education',null),
-  ('5730','Student loan interest','Expense','Education','Student loan interest'),
-  ('5810','Federal income tax','Expense','Taxes','Federal tax payments'),
-  ('5820','State income tax','Expense','Taxes','State and local taxes (Schedule A)'),
-  ('5830','Other taxes','Expense','Taxes',null),
-  ('5910','Business expenses','Expense','Business',null),
-  ('5920','Software and tools','Expense','Business',null),
-  ('5990','Uncategorized expense','Expense','Other',null),
-  ('4990','Uncategorized income','Income','Income',null),
-  ('7000','Investment and asset value changes','Other Income','Value changes',null),
-  ('7900','Reconciliation discrepancies','Other Expense','Other',null)
+-- Books set up before the personal categories (the first version had utilities, food and so on split finer,
+-- plus a Business group): clear the old categories nothing uses yet, so the list below goes in clean. Any
+-- already used stay, switched off and marked (old). Uncategorized income and expense are kept as they are.
+do $$
+begin
+  if exists (select 1 from public.gl_accounts where era_category is not null)
+     or not exists (select 1 from public.gl_accounts where number = '5110' and name = 'Electric and gas') then
+    return;
+  end if;
+  update public.gl_accounts a set is_active = false, name = a.name || ' (old)', number = null
+  where a.account_type in ('Income','Expense') and a.number not in ('4990','5990')
+    and (exists (select 1 from public.ledger_lines l where l.gl_account_id = a.id)
+         or exists (select 1 from public.bank_rules r where r.gl_account_id = a.id));
+  delete from public.gl_accounts a
+  where a.account_type in ('Income','Expense') and a.number not in ('4990','5990') and a.is_active;
+end $$;
+
+-- Starting chart: personal categories in the same groups Era uses, so Era's category on each bank transaction
+-- fills in the right one. A few extra (income taxes, property taxes, charitable donations, dividends) carry the
+-- tax lines the year-end tax pack needs. Bank, card and investment accounts are added when they are linked to
+-- the bank feed (or by hand in Accounts). Everything here can be renamed, added to or switched off.
+insert into public.gl_accounts (number, name, account_type, category_group, tax_line, era_category) values
+  ('1000','Checking','Bank',null,null,null),
+  ('1010','Savings','Bank',null,null,null),
+  ('1090','Cash on hand','Bank',null,null,null),
+  ('3000','Opening balance equity','Equity',null,null,null),
+  ('3900','Net worth carried forward','Equity',null,null,null),
+  ('4000','Paychecks','Income','Income','Wages (W-2)','Paychecks'),
+  ('4200','Side income','Income','Income',null,'Side hustles and business'),
+  ('4300','Interest','Income','Income','Interest income (1099-INT)','Interest and dividends'),
+  ('4400','Dividends','Income','Income','Dividends (1099-DIV)',null),
+  ('4500','Refunds and cashback','Income','Income',null,'Tax refunds and cashback'),
+  ('4600','Gifts received','Income','Income',null,'Gifts received'),
+  ('4900','Other income','Income','Income',null,null),
+  ('4990','Uncategorized income','Income','Income',null,null),
+  ('5010','Rent','Expense','Housing',null,'Rent'),
+  ('5020','Mortgage','Expense','Housing',null,'Mortgage and home equity'),
+  ('5030','Utilities','Expense','Housing',null,'Utilities'),
+  ('5040','Home maintenance and improvement','Expense','Housing',null,'Home maintenance and improvement'),
+  ('5110','Groceries','Expense','Daily living',null,'Groceries'),
+  ('5120','Dining out','Expense','Daily living',null,'Dining out'),
+  ('5130','Coffee and snacks','Expense','Daily living',null,'Coffee and snacks'),
+  ('5140','Pets','Expense','Daily living',null,'Pets'),
+  ('5150','Healthcare and pharmacy','Expense','Daily living','Medical (Schedule A)','Healthcare and pharmacy'),
+  ('5160','Childcare','Expense','Daily living',null,'Childcare'),
+  ('5210','Vehicle expenses','Expense','Transportation',null,'Vehicle expenses'),
+  ('5220','Public transit','Expense','Transportation',null,'Public transit'),
+  ('5230','Ride shares','Expense','Transportation',null,'Ride shares'),
+  ('5310','Shopping and gear','Expense','Lifestyle',null,'Shopping and gear'),
+  ('5320','Entertainment and subscriptions','Expense','Lifestyle',null,'Entertainment and subscriptions'),
+  ('5330','Health and fitness','Expense','Lifestyle',null,'Health and fitness'),
+  ('5340','Travel and vacation','Expense','Lifestyle',null,'Travel and vacation'),
+  ('5410','Student loans and personal debt','Expense','Financial',null,'Student loans and personal debt'),
+  ('5420','Insurance','Expense','Financial',null,'Insurance'),
+  ('5430','Taxes and bank fees','Expense','Financial',null,'Taxes and bank fees'),
+  ('5440','Education','Expense','Financial',null,'Education'),
+  ('5510','Federal income tax','Expense','Taxes','Federal tax payments',null),
+  ('5520','State income tax','Expense','Taxes','State and local taxes (Schedule A)',null),
+  ('5530','Property taxes','Expense','Taxes','State and local taxes (Schedule A)',null),
+  ('5610','Gifts given and donations','Expense','Other',null,'Gifts given and donations'),
+  ('5620','Charitable donations','Expense','Other','Charitable contributions (Schedule A)',null),
+  ('5630','Cash, checks and misc','Expense','Other',null,'Cash, checks, and misc'),
+  ('5990','Uncategorized expense','Expense','Other',null,null),
+  ('7000','Investment and asset value changes','Other Income','Value changes',null,null),
+  ('7900','Reconciliation discrepancies','Other Expense','Other',null,null)
 on conflict do nothing;
 
 update public.book_settings s set

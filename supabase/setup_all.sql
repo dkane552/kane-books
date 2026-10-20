@@ -210,69 +210,74 @@ create table if not exists public.gl_accounts (
 );
 create unique index if not exists gl_accounts_number_key on public.gl_accounts(number) where number is not null;
 create unique index if not exists gl_accounts_name_key on public.gl_accounts(lower(name));
+-- The Era category a category matches: bank transactions Era tagged with it arrive with this category filled in.
+alter table public.gl_accounts add column if not exists era_category text;
 
--- Starting chart. Bank, card and investment accounts are added when they are linked to the bank feed
--- (or by hand in Accounts); the categories below can be renamed, merged or switched off.
-insert into public.gl_accounts (number, name, account_type, category_group, tax_line) values
-  ('1000','Checking','Bank',null,null),
-  ('1010','Savings','Bank',null,null),
-  ('1090','Cash on hand','Bank',null,null),
-  ('3000','Opening balance equity','Equity',null,null),
-  ('3900','Net worth carried forward','Equity',null,null),
-  ('4000','Paychecks','Income','Income','Wages (W-2)'),
-  ('4100','Business distributions','Income','Income','Business distributions (K-1)'),
-  ('4200','Side income','Income','Income',null),
-  ('4300','Interest','Income','Income','Interest income (1099-INT)'),
-  ('4400','Dividends','Income','Income','Dividends (1099-DIV)'),
-  ('4500','Refunds and reimbursements','Income','Income',null),
-  ('4600','Gifts received','Income','Income',null),
-  ('4900','Other income','Income','Income',null),
-  ('5010','Rent','Expense','Housing',null),
-  ('5020','Mortgage interest','Expense','Housing','Mortgage interest (Schedule A)'),
-  ('5030','Property taxes','Expense','Housing','State and local taxes (Schedule A)'),
-  ('5040','Home insurance','Expense','Housing',null),
-  ('5050','Home maintenance','Expense','Housing',null),
-  ('5060','Furniture and household','Expense','Housing',null),
-  ('5110','Electric and gas','Expense','Utilities',null),
-  ('5120','Water and trash','Expense','Utilities',null),
-  ('5130','Internet and TV','Expense','Utilities',null),
-  ('5140','Phone','Expense','Utilities',null),
-  ('5210','Groceries','Expense','Food',null),
-  ('5220','Restaurants','Expense','Food',null),
-  ('5230','Coffee','Expense','Food',null),
-  ('5310','Gas and fuel','Expense','Transportation',null),
-  ('5320','Auto insurance','Expense','Transportation',null),
-  ('5330','Auto maintenance','Expense','Transportation',null),
-  ('5340','Parking and tolls','Expense','Transportation',null),
-  ('5350','Rideshare and transit','Expense','Transportation',null),
-  ('5360','Auto loan interest','Expense','Transportation',null),
-  ('5410','Health insurance','Expense','Health','Medical (Schedule A)'),
-  ('5420','Doctor and dentist','Expense','Health','Medical (Schedule A)'),
-  ('5430','Pharmacy','Expense','Health','Medical (Schedule A)'),
-  ('5440','Fitness','Expense','Health',null),
-  ('5510','Clothing','Expense','Personal',null),
-  ('5520','Personal care','Expense','Personal',null),
-  ('5530','Subscriptions','Expense','Personal',null),
-  ('5540','Entertainment','Expense','Personal',null),
-  ('5550','Hobbies','Expense','Personal',null),
-  ('5560','Travel','Expense','Personal',null),
-  ('5570','Gifts given','Expense','Personal',null),
-  ('5580','Charitable giving','Expense','Personal','Charitable contributions (Schedule A)'),
-  ('5610','Bank and card fees','Expense','Financial',null),
-  ('5620','Interest paid','Expense','Financial',null),
-  ('5630','Tax prep and legal','Expense','Financial',null),
-  ('5710','Courses and licenses','Expense','Education',null),
-  ('5720','Books and learning','Expense','Education',null),
-  ('5730','Student loan interest','Expense','Education','Student loan interest'),
-  ('5810','Federal income tax','Expense','Taxes','Federal tax payments'),
-  ('5820','State income tax','Expense','Taxes','State and local taxes (Schedule A)'),
-  ('5830','Other taxes','Expense','Taxes',null),
-  ('5910','Business expenses','Expense','Business',null),
-  ('5920','Software and tools','Expense','Business',null),
-  ('5990','Uncategorized expense','Expense','Other',null),
-  ('4990','Uncategorized income','Income','Income',null),
-  ('7000','Investment and asset value changes','Other Income','Value changes',null),
-  ('7900','Reconciliation discrepancies','Other Expense','Other',null)
+-- Books set up before the personal categories (the first version had utilities, food and so on split finer,
+-- plus a Business group): clear the old categories nothing uses yet, so the list below goes in clean. Any
+-- already used stay, switched off and marked (old). Uncategorized income and expense are kept as they are.
+do $$
+begin
+  if exists (select 1 from public.gl_accounts where era_category is not null)
+     or not exists (select 1 from public.gl_accounts where number = '5110' and name = 'Electric and gas') then
+    return;
+  end if;
+  update public.gl_accounts a set is_active = false, name = a.name || ' (old)', number = null
+  where a.account_type in ('Income','Expense') and a.number not in ('4990','5990')
+    and (exists (select 1 from public.ledger_lines l where l.gl_account_id = a.id)
+         or exists (select 1 from public.bank_rules r where r.gl_account_id = a.id));
+  delete from public.gl_accounts a
+  where a.account_type in ('Income','Expense') and a.number not in ('4990','5990') and a.is_active;
+end $$;
+
+-- Starting chart: personal categories in the same groups Era uses, so Era's category on each bank transaction
+-- fills in the right one. A few extra (income taxes, property taxes, charitable donations, dividends) carry the
+-- tax lines the year-end tax pack needs. Bank, card and investment accounts are added when they are linked to
+-- the bank feed (or by hand in Accounts). Everything here can be renamed, added to or switched off.
+insert into public.gl_accounts (number, name, account_type, category_group, tax_line, era_category) values
+  ('1000','Checking','Bank',null,null,null),
+  ('1010','Savings','Bank',null,null,null),
+  ('1090','Cash on hand','Bank',null,null,null),
+  ('3000','Opening balance equity','Equity',null,null,null),
+  ('3900','Net worth carried forward','Equity',null,null,null),
+  ('4000','Paychecks','Income','Income','Wages (W-2)','Paychecks'),
+  ('4200','Side income','Income','Income',null,'Side hustles and business'),
+  ('4300','Interest','Income','Income','Interest income (1099-INT)','Interest and dividends'),
+  ('4400','Dividends','Income','Income','Dividends (1099-DIV)',null),
+  ('4500','Refunds and cashback','Income','Income',null,'Tax refunds and cashback'),
+  ('4600','Gifts received','Income','Income',null,'Gifts received'),
+  ('4900','Other income','Income','Income',null,null),
+  ('4990','Uncategorized income','Income','Income',null,null),
+  ('5010','Rent','Expense','Housing',null,'Rent'),
+  ('5020','Mortgage','Expense','Housing',null,'Mortgage and home equity'),
+  ('5030','Utilities','Expense','Housing',null,'Utilities'),
+  ('5040','Home maintenance and improvement','Expense','Housing',null,'Home maintenance and improvement'),
+  ('5110','Groceries','Expense','Daily living',null,'Groceries'),
+  ('5120','Dining out','Expense','Daily living',null,'Dining out'),
+  ('5130','Coffee and snacks','Expense','Daily living',null,'Coffee and snacks'),
+  ('5140','Pets','Expense','Daily living',null,'Pets'),
+  ('5150','Healthcare and pharmacy','Expense','Daily living','Medical (Schedule A)','Healthcare and pharmacy'),
+  ('5160','Childcare','Expense','Daily living',null,'Childcare'),
+  ('5210','Vehicle expenses','Expense','Transportation',null,'Vehicle expenses'),
+  ('5220','Public transit','Expense','Transportation',null,'Public transit'),
+  ('5230','Ride shares','Expense','Transportation',null,'Ride shares'),
+  ('5310','Shopping and gear','Expense','Lifestyle',null,'Shopping and gear'),
+  ('5320','Entertainment and subscriptions','Expense','Lifestyle',null,'Entertainment and subscriptions'),
+  ('5330','Health and fitness','Expense','Lifestyle',null,'Health and fitness'),
+  ('5340','Travel and vacation','Expense','Lifestyle',null,'Travel and vacation'),
+  ('5410','Student loans and personal debt','Expense','Financial',null,'Student loans and personal debt'),
+  ('5420','Insurance','Expense','Financial',null,'Insurance'),
+  ('5430','Taxes and bank fees','Expense','Financial',null,'Taxes and bank fees'),
+  ('5440','Education','Expense','Financial',null,'Education'),
+  ('5510','Federal income tax','Expense','Taxes','Federal tax payments',null),
+  ('5520','State income tax','Expense','Taxes','State and local taxes (Schedule A)',null),
+  ('5530','Property taxes','Expense','Taxes','State and local taxes (Schedule A)',null),
+  ('5610','Gifts given and donations','Expense','Other',null,'Gifts given and donations'),
+  ('5620','Charitable donations','Expense','Other','Charitable contributions (Schedule A)',null),
+  ('5630','Cash, checks and misc','Expense','Other',null,'Cash, checks, and misc'),
+  ('5990','Uncategorized expense','Expense','Other',null,null),
+  ('7000','Investment and asset value changes','Other Income','Value changes',null,null),
+  ('7900','Reconciliation discrepancies','Other Expense','Other',null,null)
 on conflict do nothing;
 
 update public.book_settings s set
@@ -1249,6 +1254,45 @@ begin
   return v_entry;
 end $$;
 
+-- Add many at once (Add all categorized): p_items = [{txn, gl_account_id}]. Each uses its suggestion's payee,
+-- memo and project, or the merchant as the payee. A transfer whose other side is already in the books (added
+-- earlier in the same batch, say) is matched to that entry instead of being added twice. One that fails is
+-- skipped and counted. Returns {added, matched, failed}.
+create or replace function public.bank_accept_many(p_items jsonb)
+returns jsonb language plpgsql set search_path = public as $$
+declare
+  x jsonb; b record; v_gl uuid; v_is_money boolean; c record; n int;
+  v_added int := 0; v_matched int := 0; v_failed int := 0;
+begin
+  for x in select value from jsonb_array_elements(p_items) loop
+    begin
+      select t.*, f.gl_account_id as feed_gl into b from public.bank_transactions t
+      join public.bank_feed_accounts f on f.id = t.feed_account_id
+      where t.id = (x->>'txn')::uuid;
+      if b.id is null or b.status <> 'new' then continue; end if;
+      v_gl := (x->>'gl_account_id')::uuid;
+      select a.classification in ('Asset','Liability','Equity') into v_is_money from public.gl_accounts a where a.id = v_gl;
+      if v_is_money then
+        select count(*) into n from public.bank_candidates(b.id, 5);
+        if n >= 1 then
+          select * into c from public.bank_candidates(b.id, 5) order by days limit 1;
+          perform public.bank_match(b.id, 'entry', c.source_id);
+          v_matched := v_matched + 1;
+          continue;
+        end if;
+      end if;
+      perform public.bank_accept(b.id, nullif(b.suggestion->>'payee_id', '')::uuid, b.suggestion->>'memo',
+        jsonb_build_array(jsonb_build_object('amount', abs(b.amount), 'gl_account_id', v_gl,
+                                             'project_id', b.suggestion->>'project_id')),
+        null, case when b.suggestion->>'payee_id' is null then b.merchant end);
+      v_added := v_added + 1;
+    exception when others then
+      v_failed := v_failed + 1;
+    end;
+  end loop;
+  return jsonb_build_object('added', v_added, 'matched', v_matched, 'failed', v_failed);
+end $$;
+
 create or replace function public.bank_exclude(p_txn uuid)
 returns void language plpgsql set search_path = public as $$
 begin
@@ -1309,7 +1353,28 @@ begin
     end if;
     -- 2. Rules.
     r := public.bank_rule_for(b.id);
-    if r.id is null then continue; end if;
+    if r.id is null then
+      -- 3. No rule: fill in from Era. A transfer Era linked to a transaction on another linked account
+      --    points at that account; otherwise the category matching Era's own category.
+      v_sugg := null;
+      select jsonb_build_object('gl_account_id', f2.gl_account_id, 'source', 'era transfer') into v_sugg
+      from public.bank_transactions o join public.bank_feed_accounts f2 on f2.id = o.feed_account_id
+      where b.transfer_era_id is not null and o.era_id = b.transfer_era_id
+        and f2.gl_account_id is not null and f2.gl_account_id <> b.gl_account_id
+      limit 1;
+      if v_sugg is null and b.era_category is not null then
+        select jsonb_build_object('gl_account_id', a.id, 'source', 'era') into v_sugg
+        from public.gl_accounts a
+        where a.is_active and lower(a.era_category) = lower(b.era_category)
+        order by a.number nulls last limit 1;
+      end if;
+      -- Only replaces a suggestion that came from Era (a rule's stays until the rule goes).
+      if (b.suggestion is null or b.suggestion->>'source' like 'era%') and b.suggestion is distinct from v_sugg then
+        update public.bank_transactions set suggestion = v_sugg, updated_at = now() where id = b.id;
+      end if;
+      if v_sugg is not null then v_suggested := v_suggested + 1; end if;
+      continue;
+    end if;
     v_sugg := jsonb_build_object('rule_id', r.id, 'gl_account_id', r.gl_account_id, 'project_id', r.project_id,
                                  'payee_id', r.payee_id, 'memo', r.memo);
     update public.bank_transactions set suggestion = v_sugg, updated_at = now()

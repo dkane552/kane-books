@@ -87,17 +87,47 @@ export const TAX_LINES = [
 export const CATEGORY_GROUPS = [
   "Income",
   "Housing",
-  "Utilities",
-  "Food",
+  "Daily living",
   "Transportation",
-  "Health",
-  "Personal",
+  "Lifestyle",
   "Financial",
-  "Education",
   "Taxes",
-  "Business",
-  "Value changes",
   "Other",
+  "Value changes",
+];
+
+/** Era's own categories (what Era tags each bank transaction with). A category set to one of these is filled
+ *  in on every bank transaction Era tagged that way. Transfers, savings and investments are left out: those
+ *  move money between your own accounts rather than being spending. */
+export const ERA_CATEGORIES = [
+  "Paychecks",
+  "Side hustles and business",
+  "Interest and dividends",
+  "Tax refunds and cashback",
+  "Gifts received",
+  "Rent",
+  "Mortgage and home equity",
+  "Utilities",
+  "Home maintenance and improvement",
+  "Groceries",
+  "Dining out",
+  "Coffee and snacks",
+  "Pets",
+  "Healthcare and pharmacy",
+  "Childcare",
+  "Vehicle expenses",
+  "Public transit",
+  "Ride shares",
+  "Shopping and gear",
+  "Entertainment and subscriptions",
+  "Health and fitness",
+  "Travel and vacation",
+  "Student loans and personal debt",
+  "Insurance",
+  "Taxes and bank fees",
+  "Education",
+  "Gifts given and donations",
+  "Cash, checks, and misc",
 ];
 
 export const glLabel = (a: Pick<GlAccount, "number" | "name">) =>

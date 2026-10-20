@@ -25,10 +25,10 @@ select (select id from public.gl_accounts where number = '1000') as checking,
        (select id from public.gl_accounts where number = '1200') as brokerage,
        (select id from public.gl_accounts where number = '3000') as opening,
        (select id from public.gl_accounts where number = '4000') as pay,
-       (select id from public.gl_accounts where number = '5210') as groceries,
-       (select id from public.gl_accounts where number = '5220') as restaurants,
-       (select id from public.gl_accounts where number = '5530') as subs,
-       (select id from public.gl_accounts where number = '5910') as bizexp,
+       (select id from public.gl_accounts where number = '5110') as groceries,
+       (select id from public.gl_accounts where number = '5120') as restaurants,
+       (select id from public.gl_accounts where number = '5320') as subs,
+       (select id from public.gl_accounts where number = '5310') as bizexp,
        (select id from public.gl_accounts where number = '4200') as side;
 grant select on ids to authenticated;
 
@@ -231,9 +231,9 @@ insert into public.budget_amounts (gl_account_id, month, amount) select restaura
 do $$
 declare b record;
 begin
-  select * into b from public.report_budget('2026-02-10') where account_name = 'Restaurants';
+  select * into b from public.report_budget('2026-02-10') where account_name = 'Dining out';
   assert b.budget = 25 and b.budget_is_override and b.actual = 20.50 and b.remaining = 4.50, 'February budget ' || row_to_json(b);
-  select * into b from public.report_budget('2026-03-10') where account_name = 'Restaurants';
+  select * into b from public.report_budget('2026-03-10') where account_name = 'Dining out';
   assert b.budget = 300 and not b.budget_is_override, 'March uses the usual amount';
   assert (select count(*) from public.report_budget_year(2026) where gl_account_id = (select restaurants from ids)) = 12,
     'a year of budget rows';

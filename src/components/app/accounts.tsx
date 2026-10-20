@@ -39,6 +39,7 @@ import {
   ASSET_TYPES,
   BALANCE_TYPES,
   CATEGORY_GROUPS,
+  ERA_CATEGORIES,
   FEED_TYPES,
   LIABILITY_TYPES,
   TAX_LINES,
@@ -796,6 +797,7 @@ function GlAccountDialog({
     account_type: account?.account_type ?? ("Expense" as GlAccountType),
     category_group: account?.category_group ?? "",
     tax_line: account?.tax_line ?? "",
+    era_category: account?.era_category ?? "",
     institution: account?.institution ?? "",
     description: account?.description ?? "",
     is_active: account?.is_active ?? true,
@@ -817,12 +819,16 @@ function GlAccountDialog({
           account_type: f.account_type,
           category_group: isCategory ? f.category_group || null : null,
           tax_line: f.tax_line || null,
+          era_category: isCategory ? f.era_category || null : null,
           institution: isCategory ? null : f.institution || null,
           description: f.description || null,
           is_active: f.is_active,
         };
         if (account) await db.update("gl_accounts", account.id, values);
         else await db.insert("gl_accounts", values);
+        // Refill the bank feed's suggestions when the Era match changed.
+        if ((account?.era_category ?? null) !== values.era_category)
+          await db.batch(() => rpc("bank_autoprocess", {}));
         onClose();
       }}
     >
@@ -867,6 +873,21 @@ function GlAccountDialog({
             value={f.institution}
             onChange={(e) => setF({ ...f, institution: e.target.value })}
           />
+        </Field>
+      )}
+      {isCategory && (
+        <Field
+          label="Era category"
+          hint="Bank transactions Era tags this way arrive with this category filled in."
+        >
+          <Select value={f.era_category} onChange={(v) => setF({ ...f, era_category: v })}>
+            <option value="">None</option>
+            {[...new Set([...ERA_CATEGORIES, ...(f.era_category ? [f.era_category] : [])])].map(
+              (c) => (
+                <option key={c}>{c}</option>
+              ),
+            )}
+          </Select>
         </Field>
       )}
       <Field label="Tax line" hint="Puts it on the tax summary for your CPA.">

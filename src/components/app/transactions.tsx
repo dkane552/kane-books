@@ -147,6 +147,7 @@ function BankFeedTab() {
   const [setup, setSetup] = useState(false);
   const [upload, setUpload] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [bulk, setBulk] = useState<{ done: number; of: number } | null>(null);
   const [quick, setQuick] = useState<Record<string, string>>({});
   const autoRan = useRef(false);
 
@@ -237,16 +238,41 @@ function BankFeedTab() {
 
   async function addAllSuggested() {
     if (!confirmAction(`Add ${suggested.length} transactions with the categories shown?`)) return;
-    let done = 0;
-    for (const t of suggested) {
-      try {
-        await quickAdd(t);
-        done++;
-      } catch {
-        break;
-      }
+    const items = suggested.map((t) => ({
+      txn: t.id,
+      gl_account_id: quick[t.id] || t.suggestion?.gl_account_id,
+    }));
+    const total = { added: 0, matched: 0, failed: 0 };
+    setBulk({ done: 0, of: items.length });
+    try {
+      await db.batch(async () => {
+        // In slices, so a long list shows progress and never runs into the database's time limit.
+        for (let i = 0; i < items.length; i += 150) {
+          const r = (await rpc("bank_accept_many", { p_items: items.slice(i, i + 150) })) as {
+            added: number;
+            matched: number;
+            failed: number;
+          };
+          total.added += r.added;
+          total.matched += r.matched;
+          total.failed += r.failed;
+          setBulk({ done: Math.min(i + 150, items.length), of: items.length });
+        }
+      });
+      setQuick({});
+      toast.success(`${total.added + total.matched} added to the books`, {
+        description: [
+          total.matched ? `${total.matched} transfers matched to their other side` : "",
+          total.failed ? `${total.failed} could not be added; open them with More` : "",
+        ]
+          .filter(Boolean)
+          .join(". "),
+      });
+    } catch (e) {
+      toast.error("Could not add them all", { description: errMsg(e) });
+    } finally {
+      setBulk(null);
     }
-    toast.success(`${done} added to the books`);
   }
 
   const cols: Column<BankTransaction>[] = [
@@ -429,9 +455,14 @@ function BankFeedTab() {
                 : "Not synced yet"}
           </span>
           {filter === "For review" && suggested.length > 1 && (
-            <Button size="sm" variant="outline" onClick={addAllSuggested} disabled={db.pending}>
-              <Sparkles />
-              Add {suggested.length} categorized
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addAllSuggested}
+              disabled={db.pending || !!bulk}
+            >
+              {bulk ? <Loader2 className="animate-spin" /> : <Sparkles />}
+              {bulk ? `Adding ${bulk.done} of ${bulk.of}` : `Add ${suggested.length} categorized`}
             </Button>
           )}
           <Button
