@@ -205,7 +205,7 @@ async function sync(by: string) {
       `${fetched} transactions read`,
       `${changed} new or changed`,
       `${r.matched ?? 0} matched`,
-      ...(r.added_by_rules ? [`${r.added_by_rules} added by rules`] : []),
+      ...(r.added_by_rules ? [`${r.added_by_rules} added automatically`] : []),
       ...(valued ? [`${valued} ${valued === 1 ? "value" : "values"} updated`] : []),
     ].join(" · ");
     const problem = failed.length ? `Could not read ${failed.join("; ")}` : null;

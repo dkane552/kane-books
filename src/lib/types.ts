@@ -22,6 +22,8 @@ export interface BookSettings {
   value_change_gl_id: string | null;
   uncategorized_expense_gl_id: string | null;
   uncategorized_income_gl_id: string | null;
+  /** Bank transactions over this are never added automatically. */
+  auto_add_limit: number | string;
   updated_at: string;
 }
 
@@ -74,6 +76,8 @@ export interface GlAccount {
   tax_line: string | null;
   /** Era's category this one matches; bank transactions Era tagged with it arrive with this filled in. */
   era_category: string | null;
+  /** Era's tag is trusted for this category: such transactions are added without asking. */
+  era_auto: boolean | null;
   description: string | null;
   institution: string | null;
   is_active: boolean;
@@ -315,12 +319,17 @@ export interface BankFeedState {
   last_status: string | null;
   last_error: string | null;
 }
+/** What the feed filled in. `gl_account_id` is a category ready to add (a rule, or an Era tag trusted for
+ *  that category); `hint_gl_account_id` is only Era's guess, shown beside a row left uncategorized. */
 export interface BankSuggestion {
-  rule_id: string;
-  gl_account_id: string | null;
-  project_id: string | null;
-  payee_id: string | null;
-  memo: string | null;
+  rule_id?: string | null;
+  gl_account_id?: string | null;
+  hint_gl_account_id?: string | null;
+  source?: "rule" | "era" | "era transfer" | null;
+  over_limit?: boolean;
+  project_id?: string | null;
+  payee_id?: string | null;
+  memo?: string | null;
 }
 export interface BankTransaction {
   id: string;

@@ -13,6 +13,7 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -149,6 +150,12 @@ function BankFeedTab() {
   const [syncing, setSyncing] = useState(false);
   const [bulk, setBulk] = useState<{ done: number; of: number } | null>(null);
   const [quick, setQuick] = useState<Record<string, string>>({});
+  const [ruleFor, setRuleFor] = useState<{ txn: BankTransaction; gl: string } | null>(null);
+  const { data: settings } = useSettings();
+  const glName = (id: string) => {
+    const a = gl?.find((x) => x.id === id);
+    return a ? a.name : "a category";
+  };
   const autoRan = useRef(false);
 
   async function sync(manual: boolean) {
@@ -338,10 +345,37 @@ function BankFeedTab() {
                 Project: {projects?.find((p) => p.id === r.suggestion?.project_id)?.name}
               </div>
             )}
+            {r.suggestion?.hint_gl_account_id && !quick[r.id] && (
+              <div className="mt-0.5 text-[length:calc(10px*var(--ts,1))] text-muted-foreground">
+                Era guessed {glName(r.suggestion.hint_gl_account_id)}.{" "}
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() =>
+                    setQuick((q) => ({ ...q, [r.id]: r.suggestion?.hint_gl_account_id ?? "" }))
+                  }
+                >
+                  Use it
+                </button>
+              </div>
+            )}
+            {r.suggestion?.over_limit && !quick[r.id] && (
+              <div className="mt-0.5 text-[length:calc(10px*var(--ts,1))] text-muted-foreground">
+                Over {money(num(settings?.auto_add_limit ?? 1000))}, so it waits for you.
+              </div>
+            )}
           </div>
         ) : r.status === "matched" || r.status === "added" ? (
           <PeekName target={linkTarget(r)} title="Open the entry">
             <StatusPill tone="approved">{r.status === "matched" ? "Matched" : "Added"}</StatusPill>
+            {r.reviewed_by?.startsWith("Automatic") && (
+              <span
+                className="ml-1 text-[length:calc(10px*var(--ts,1))] text-muted-foreground"
+                title={r.reviewed_by}
+              >
+                automatically{r.reviewed_by.includes("rule") ? " by a rule" : ""}
+              </span>
+            )}
           </PeekName>
         ) : (
           <StatusPill tone="void">Excluded</StatusPill>
@@ -362,6 +396,25 @@ function BankFeedTab() {
               }}
             >
               Add
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              title="Make a rule so transactions like this are categorized on their own"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRuleFor({
+                  txn: r,
+                  gl:
+                    quick[r.id] ||
+                    r.suggestion?.gl_account_id ||
+                    r.suggestion?.hint_gl_account_id ||
+                    "",
+                });
+              }}
+            >
+              <Wand2 />
+              Rule
             </Button>
             <Button
               size="sm"
@@ -523,6 +576,14 @@ function BankFeedTab() {
       )}
       {setup && <SetupDialog onClose={() => setSetup(false)} />}
       {upload && <StatementDialog feeds={feeds ?? []} onClose={() => setUpload(false)} />}
+      {ruleFor && (
+        <RuleDialog
+          txn={ruleFor.txn}
+          initialGl={ruleFor.gl}
+          waiting={(txns ?? []).filter((t) => t.status === "new")}
+          onClose={() => setRuleFor(null)}
+        />
+      )}
     </>
   );
 }
@@ -794,8 +855,8 @@ function ReviewDialog({
     },
   ]);
   const [ruleOn, setRuleOn] = useState(false);
-  const [ruleText, setRuleText] = useState((txn.merchant || txn.description || "").slice(0, 40));
-  const [ruleAuto, setRuleAuto] = useState(false);
+  const [ruleText, setRuleText] = useState(ruleTextFor(txn));
+  const [ruleAuto, setRuleAuto] = useState(true);
   const total = lines.reduce((t, l) => t + Number(l.amount || 0), 0);
   const left = Math.round((abs - total) * 100) / 100;
   const setLine = (i: number, patch: Partial<Line>) =>
@@ -841,8 +902,10 @@ function ReviewDialog({
           p_rule:
             ruleOn && ruleText.trim() ? { contains: ruleText.trim(), auto_add: ruleAuto } : null,
         });
+        // A new rule applies straight away to the others waiting.
+        if (ruleOn && ruleText.trim()) await rpc("bank_autoprocess", {});
       });
-      toast.success("Added to the books");
+      toast.success(ruleOn ? "Added, and the rule is saved" : "Added to the books");
       onClose();
     } catch {
       // shown
@@ -1017,7 +1080,7 @@ function ReviewDialog({
         <div className="full col-span-2 flex flex-wrap items-center gap-2 text-xs">
           <label className="flex items-center gap-2">
             <Checkbox checked={ruleOn} onCheckedChange={(v) => setRuleOn(v === true)} />
-            Next time, suggest this for transactions containing
+            Make a rule: transactions containing
           </label>
           <Input
             className="h-7 w-48"
@@ -1032,10 +1095,150 @@ function ReviewDialog({
               disabled={!ruleOn}
               onCheckedChange={(v) => setRuleAuto(v === true)}
             />
-            and add them without asking
+            get this category and are added automatically
           </label>
         </div>
       )}
+    </FormDialog>
+  );
+}
+
+// =====================================================================================
+/** The part of a bank description worth matching on: the merchant, or the description up to the store number,
+ *  reference or card digits that change every time. */
+function ruleTextFor(t: BankTransaction | undefined) {
+  if (!t) return "";
+  const base = t.merchant || t.description || t.original_description || "";
+  return base
+    .replace(/[*#].*$/, "")
+    .replace(/\s+\d[\d\s-]*.*$/, "")
+    .trim()
+    .slice(0, 40);
+}
+
+const ruleMatches = (contains: string, t: BankTransaction) => {
+  const c = contains.trim().toUpperCase();
+  if (c.length < 2) return false;
+  return [t.original_description, t.description, t.merchant]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase()
+    .includes(c);
+};
+
+/** A rule: bank transactions containing some text get a category (and project), and are added on their
+ *  own when "automatically" is on. Saving applies it straight away to everything waiting for review. */
+export function RuleDialog({
+  txn,
+  initialGl,
+  waiting,
+  onClose,
+}: {
+  txn?: BankTransaction | undefined;
+  initialGl?: string | undefined;
+  waiting: BankTransaction[];
+  onClose: () => void;
+}) {
+  const db = useDb();
+  const { data: gl } = useGlAccounts();
+  const [contains, setContains] = useState(ruleTextFor(txn));
+  const [glId, setGlId] = useState(initialGl ?? "");
+  const [direction, setDirection] = useState<"" | "in" | "out">(
+    txn ? (num(txn.amount) < 0 ? "out" : "in") : "",
+  );
+  const [thisAccount, setThisAccount] = useState(false);
+  const [projectId, setProjectId] = useState(txn?.suggestion?.project_id ?? "");
+  const [auto, setAuto] = useState(true);
+  const matching = waiting.filter(
+    (t) =>
+      ruleMatches(contains, t) &&
+      (!direction || (direction === "out") === num(t.amount) < 0) &&
+      (!thisAccount || !txn || t.feed_account_id === txn.feed_account_id),
+  );
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(v) => !v && onClose()}
+      title="Make a rule"
+      description="From now on, bank transactions that match are categorized this way, and the ones waiting now are too."
+      busy={db.pending}
+      submitLabel="Save rule"
+      onSubmit={async () => {
+        if (contains.trim().length < 2)
+          return void toast.error("Enter at least 2 characters to match");
+        if (!glId) return void toast.error("Pick a category");
+        await db.insert("bank_rules", {
+          contains: contains.trim(),
+          gl_account_id: glId,
+          direction: direction || null,
+          feed_account_id: thisAccount && txn ? txn.feed_account_id : null,
+          project_id: projectId || null,
+          auto_add: auto,
+        });
+        const r = (await db.batch(() => rpc("bank_autoprocess", {}))) as {
+          added?: number;
+          suggested?: number;
+        } | null;
+        toast.success("Rule saved", {
+          description: auto
+            ? `${matching.length} waiting ${matching.length === 1 ? "transaction" : "transactions"} matched; ${r?.added ?? 0} added to the books in all.`
+            : `${matching.length} waiting ${matching.length === 1 ? "transaction" : "transactions"} now show this category.`,
+        });
+        onClose();
+      }}
+    >
+      <Field label="When the description contains" full>
+        <Input
+          required
+          autoFocus
+          value={contains}
+          onChange={(e) => setContains(e.target.value)}
+          placeholder="JEWEL OSCO"
+        />
+        {txn && (
+          <span className="text-[length:calc(11px*var(--ts,1))] text-muted-foreground">
+            This one reads: {txn.original_description || txn.description}
+          </span>
+        )}
+      </Field>
+      <Field label="Category">
+        <Select value={glId} onChange={setGlId} ariaLabel="Category">
+          <option value="">Choose a category</option>
+          <AccountOptions accounts={gl} types={[...CATEGORY_TYPES, ...BALANCE_TYPES]} keep={glId} />
+        </Select>
+      </Field>
+      <Field label="Money">
+        <Select value={direction} onChange={(v) => setDirection(v as "" | "in" | "out")}>
+          <option value="out">Going out (spending)</option>
+          <option value="in">Coming in</option>
+          <option value="">Either way</option>
+        </Select>
+      </Field>
+      <Field label="Project" hint="Optional.">
+        <Select value={projectId} onChange={setProjectId}>
+          <option value="">None</option>
+          <ProjectOptions keep={projectId} />
+        </Select>
+      </Field>
+      <div className="full col-span-2 space-y-2 text-xs">
+        {txn && (
+          <label className="flex items-center gap-2">
+            <Checkbox checked={thisAccount} onCheckedChange={(v) => setThisAccount(v === true)} />
+            Only on {txn.account_name}
+          </label>
+        )}
+        <label className="flex items-center gap-2">
+          <Checkbox checked={auto} onCheckedChange={(v) => setAuto(v === true)} />
+          Add matching transactions to the books automatically (untick to just fill in the category
+          for you to check)
+        </label>
+        <p className="text-muted-foreground">
+          {contains.trim().length < 2
+            ? "Type what to match."
+            : `Matches ${matching.length} of the ${waiting.length} waiting for review.`}
+        </p>
+      </div>
     </FormDialog>
   );
 }
@@ -1062,6 +1265,9 @@ function SetupDialog({ onClose }: { onClose: () => void }) {
   const [eraAccounts, setEraAccounts] = useState<EraAccount[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [pick, setPick] = useState<Record<string, string>>({});
+  const [newRule, setNewRule] = useState(false);
+  const ruleSince = useMemo(() => addDays(todayISO(), -180), []);
+  const { data: ruleTxns } = useBankTransactions(ruleSince);
   const linked = new Set((feeds ?? []).map((f) => f.era_account_key));
   const glName = (id: string | null) => {
     const a = gl?.find((x) => x.id === id);
@@ -1279,7 +1485,13 @@ function SetupDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <div className="mt-3 text-xs font-medium">Rules</div>
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-xs font-medium">Rules</span>
+          <Button size="sm" variant="outline" onClick={() => setNewRule(true)}>
+            <Wand2 />
+            New rule
+          </Button>
+        </div>
         {rules?.length ? (
           <div className="data-scroll">
             <table className="data-table">
@@ -1333,9 +1545,15 @@ function SetupDialog({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
-            No rules yet. When you add a transaction with More, tick "Next time, suggest this" to
-            make one.
+            No rules yet. Click Rule on any transaction (or New rule here): everything containing
+            the text you pick gets that category, now and from then on.
           </p>
+        )}
+        {newRule && (
+          <RuleDialog
+            waiting={(ruleTxns ?? []).filter((t) => t.status === "new")}
+            onClose={() => setNewRule(false)}
+          />
         )}
       </DialogContent>
     </Dialog>

@@ -66,6 +66,9 @@ create table if not exists public.book_settings (
   updated_at timestamptz not null default now()
 );
 insert into public.book_settings (id) values (1) on conflict (id) do nothing;
+-- Bank transactions over this (either way) are never added automatically; they wait for review.
+alter table public.book_settings add column if not exists auto_add_limit numeric not null default 1000
+  check (auto_add_limit >= 0);
 
 -- Each login's own display and accessibility settings (Settings > Accessibility).
 create table if not exists public.user_settings (

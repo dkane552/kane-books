@@ -47,9 +47,12 @@ Supabase project (`moszaslmoudygmxygzcf`, "Kane Books") and its own site. Nothin
   double up.
 - `bank_autoprocess()` matches each new transaction to one entry on that account with the same amount within
   5 days (a transfer entered from one side matches the other side), else applies the first `bank_rules` match
-  (suggestion, or added when `auto_add`), else suggests from Era (`source` 'era transfer': the linked account
-  when Era paired it with a transaction on another linked account; 'era': the category whose `era_category`
-  matches, income categories only for money in). `bank_accept` makes one entry (split lines, category,
+  (added when `auto_add`, the default for rules made from a row's Rule button), else Era: a transfer Era paired
+  with a transaction on another linked account, or the category whose `era_category` matches (income categories
+  only for money in). Trusted Era matches (paired transfers, categories with `era_auto`) up to
+  `book_settings.auto_add_limit` are added on their own; trusted but bigger are filled in (`over_limit`);
+  untrusted ones keep only `hint_gl_account_id` and wait uncategorized. Automatic adds are marked
+  `reviewed_by` 'Automatic (rule|Era)'; once undone or excluded (reviewed_by set) nothing re-adds them. `bank_accept` makes one entry (split lines, category,
   project); lines to a balance-sheet account make it a transfer. `bank_accept_many` adds a list in one call
   (Add all categorized; a transfer whose other side is already in matches instead). `bank_match`,
   `bank_exclude`, `bank_undo`. A sync takes each Era id once per read and keeps going past a failed account.

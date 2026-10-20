@@ -798,6 +798,7 @@ function GlAccountDialog({
     category_group: account?.category_group ?? "",
     tax_line: account?.tax_line ?? "",
     era_category: account?.era_category ?? "",
+    era_auto: account?.era_auto ?? false,
     institution: account?.institution ?? "",
     description: account?.description ?? "",
     is_active: account?.is_active ?? true,
@@ -820,14 +821,18 @@ function GlAccountDialog({
           category_group: isCategory ? f.category_group || null : null,
           tax_line: f.tax_line || null,
           era_category: isCategory ? f.era_category || null : null,
+          era_auto: isCategory && f.era_category ? f.era_auto : null,
           institution: isCategory ? null : f.institution || null,
           description: f.description || null,
           is_active: f.is_active,
         };
         if (account) await db.update("gl_accounts", account.id, values);
         else await db.insert("gl_accounts", values);
-        // Refill the bank feed's suggestions when the Era match changed.
-        if ((account?.era_category ?? null) !== values.era_category)
+        // Refill the bank feed when the Era match changed.
+        if (
+          (account?.era_category ?? null) !== values.era_category ||
+          (account?.era_auto ?? null) !== values.era_auto
+        )
           await db.batch(() => rpc("bank_autoprocess", {}));
         onClose();
       }}
@@ -876,10 +881,7 @@ function GlAccountDialog({
         </Field>
       )}
       {isCategory && (
-        <Field
-          label="Era category"
-          hint="Bank transactions Era tags this way arrive with this category filled in."
-        >
+        <Field label="Era category" hint="Bank transactions Era tags this way get this category.">
           <Select value={f.era_category} onChange={(v) => setF({ ...f, era_category: v })}>
             <option value="">None</option>
             {[...new Set([...ERA_CATEGORIES, ...(f.era_category ? [f.era_category] : [])])].map(
@@ -888,6 +890,15 @@ function GlAccountDialog({
               ),
             )}
           </Select>
+          {f.era_category && (
+            <label className="mt-1 flex items-center gap-2 text-xs">
+              <Checkbox
+                checked={f.era_auto}
+                onCheckedChange={(v) => setF({ ...f, era_auto: v === true })}
+              />
+              Add these automatically (off: they wait for you, with Era&apos;s guess shown)
+            </label>
+          )}
         </Field>
       )}
       <Field label="Tax line" hint="Puts it on the tax summary for your CPA.">

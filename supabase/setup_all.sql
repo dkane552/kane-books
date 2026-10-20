@@ -71,6 +71,9 @@ create table if not exists public.book_settings (
   updated_at timestamptz not null default now()
 );
 insert into public.book_settings (id) values (1) on conflict (id) do nothing;
+-- Bank transactions over this (either way) are never added automatically; they wait for review.
+alter table public.book_settings add column if not exists auto_add_limit numeric not null default 1000
+  check (auto_add_limit >= 0);
 
 -- Each login's own display and accessibility settings (Settings > Accessibility).
 create table if not exists public.user_settings (
@@ -212,6 +215,9 @@ create unique index if not exists gl_accounts_number_key on public.gl_accounts(n
 create unique index if not exists gl_accounts_name_key on public.gl_accounts(lower(name));
 -- The Era category a category matches: bank transactions Era tagged with it arrive with this category filled in.
 alter table public.gl_accounts add column if not exists era_category text;
+-- Era's tag is reliable enough for this category to add the transaction to the books without asking (under
+-- book_settings.auto_add_limit). Off: Era's guess is only shown as a hint and the transaction waits for review.
+alter table public.gl_accounts add column if not exists era_auto boolean;
 
 -- Books set up before the personal categories (the first version had utilities, food and so on split finer,
 -- plus a Business group): clear the old categories nothing uses yet, so the list below goes in clean. Any
@@ -279,6 +285,17 @@ insert into public.gl_accounts (number, name, account_type, category_group, tax_
   ('7000','Investment and asset value changes','Other Income','Value changes',null,null),
   ('7900','Reconciliation discrepancies','Other Expense','Other',null,null)
 on conflict do nothing;
+
+-- Which Era tags are trusted to add on their own. Clear-cut ones are; broad ones (shopping, home maintenance,
+-- cash and checks, taxes and fees, gifts, side income, refunds) stay for review because the right category,
+-- or whether it is personal at all, needs a person. Only fills categories never set, so a change in
+-- Accounts > Categories sticks.
+update public.gl_accounts set era_auto = era_category in (
+  'Paychecks','Interest and dividends','Rent','Mortgage and home equity','Utilities','Groceries','Dining out',
+  'Coffee and snacks','Pets','Healthcare and pharmacy','Childcare','Vehicle expenses','Public transit',
+  'Ride shares','Entertainment and subscriptions','Health and fitness','Travel and vacation',
+  'Student loans and personal debt','Insurance','Education')
+where era_auto is null and era_category is not null;
 
 update public.book_settings s set
   default_cash_gl_id          = coalesce(s.default_cash_gl_id,          (select id from public.gl_accounts where number = '1000')),
@@ -1328,13 +1345,22 @@ language sql stable set search_path = public as $$
   limit 1
 $$;
 
--- Match new transactions to the books, then apply rules. Returns counts.
+-- Match new transactions to the books, then categorize. Returns counts.
+--   1. Exactly one entry already in the books on this account (same amount, within 5 days): matched.
+--   2. A rule (bank_rules) whose text it contains: added without asking when the rule says so, else filled in.
+--   3. Era: a transfer Era paired with a transaction on another linked account, or a category whose
+--      era_category is Era's tag on it. Added without asking when that is trusted (a paired transfer, or a
+--      category with era_auto on) and it is not over book_settings.auto_add_limit; filled in when trusted but
+--      over the limit; otherwise Era's guess is only kept as a hint and it waits, uncategorized, for review.
+-- Anything added on its own is marked reviewed_by 'Automatic (rule)' or 'Automatic (Era)' and can be undone;
+-- once undone or excluded (reviewed_by set) it is only ever filled in, never added on its own again.
 create or replace function public.bank_autoprocess()
 returns jsonb language plpgsql set search_path = public as $$
 declare
-  b record; c record; n int; v_matched int := 0; v_added int := 0; v_suggested int := 0;
-  r public.bank_rules; v_sugg jsonb;
+  b record; c record; n int; v_matched int := 0; v_added int := 0; v_suggested int := 0; v_hinted int := 0;
+  r public.bank_rules; v_sugg jsonb; v_gl uuid; v_trusted boolean; v_how text; v_limit numeric;
 begin
+  select coalesce(auto_add_limit, 1000) into v_limit from public.book_settings where id = 1;
   for b in
     select t.*, f.gl_account_id from public.bank_transactions t
     join public.bank_feed_accounts f on f.id = t.feed_account_id
@@ -1342,7 +1368,7 @@ begin
       and not exists (select 1 from public.bank_transaction_links l where l.bank_transaction_id = t.id)
     order by t.txn_date, t.amount, t.era_id
   loop
-    -- 1. Exactly one entry on this account with the same amount within 5 days.
+    -- 1. Already in the books.
     select count(*) into n from public.bank_candidates(b.id, 5);
     if n = 1 then
       select * into c from public.bank_candidates(b.id, 5);
@@ -1351,45 +1377,77 @@ begin
       v_matched := v_matched + 1;
       continue;
     end if;
+
     -- 2. Rules.
     r := public.bank_rule_for(b.id);
-    if r.id is null then
-      -- 3. No rule: fill in from Era. A transfer Era linked to a transaction on another linked account
-      --    points at that account; otherwise the category matching Era's own category.
-      v_sugg := null;
-      select jsonb_build_object('gl_account_id', f2.gl_account_id, 'source', 'era transfer') into v_sugg
-      from public.bank_transactions o join public.bank_feed_accounts f2 on f2.id = o.feed_account_id
-      where b.transfer_era_id is not null and o.era_id = b.transfer_era_id
-        and f2.gl_account_id is not null and f2.gl_account_id <> b.gl_account_id
-      limit 1;
-      if v_sugg is null and b.era_category is not null then
-        select jsonb_build_object('gl_account_id', a.id, 'source', 'era') into v_sugg
-        from public.gl_accounts a
-        where a.is_active and lower(a.era_category) = lower(b.era_category)
-          -- an income category only for money coming in (Era tags some spending with an income category)
-          and not (a.account_type in ('Income','Other Income') and b.amount < 0)
-        order by a.number nulls last limit 1;
+    if r.id is not null then
+      v_sugg := jsonb_build_object('rule_id', r.id, 'gl_account_id', r.gl_account_id, 'project_id', r.project_id,
+                                   'payee_id', r.payee_id, 'memo', r.memo, 'source', 'rule');
+      update public.bank_transactions set suggestion = v_sugg, updated_at = now()
+      where id = b.id and suggestion is distinct from v_sugg;
+      -- Never on its own once you have undone or excluded it (reviewed_by is set then).
+      if r.auto_add and b.reviewed_by is null then
+        begin
+          perform public.bank_accept(b.id, r.payee_id, r.memo, jsonb_build_array(jsonb_build_object(
+            'amount', abs(b.amount), 'gl_account_id', r.gl_account_id, 'project_id', r.project_id)),
+            null, case when r.payee_id is null then b.merchant end);
+          update public.bank_transactions set reviewed_by = 'Automatic (rule)' where id = b.id;
+          update public.bank_rules set times_used = times_used + 1 where id = r.id;
+          v_added := v_added + 1;
+        exception when others then
+          v_suggested := v_suggested + 1;  -- a closed period, say: it stays filled in for review
+        end;
+      else
+        v_suggested := v_suggested + 1;
       end if;
-      -- Only replaces a suggestion that came from Era (a rule's stays until the rule goes).
-      if (b.suggestion is null or b.suggestion->>'source' like 'era%') and b.suggestion is distinct from v_sugg then
-        update public.bank_transactions set suggestion = v_sugg, updated_at = now() where id = b.id;
-      end if;
-      if v_sugg is not null then v_suggested := v_suggested + 1; end if;
       continue;
     end if;
-    v_sugg := jsonb_build_object('rule_id', r.id, 'gl_account_id', r.gl_account_id, 'project_id', r.project_id,
-                                 'payee_id', r.payee_id, 'memo', r.memo);
+
+    -- 3. Era. A suggestion a rule made earlier (the rule since deleted) is replaced; one picked in the
+    --    review screen is never stored, so nothing of the person's is overwritten.
+    v_gl := null; v_trusted := false; v_how := null;
+    select f2.gl_account_id into v_gl
+    from public.bank_transactions o join public.bank_feed_accounts f2 on f2.id = o.feed_account_id
+    where b.transfer_era_id is not null and o.era_id = b.transfer_era_id
+      and f2.gl_account_id is not null and f2.gl_account_id <> b.gl_account_id
+    limit 1;
+    if v_gl is not null then
+      v_trusted := true; v_how := 'era transfer';
+    elsif b.era_category is not null then
+      select a.id, coalesce(a.era_auto, false) into v_gl, v_trusted
+      from public.gl_accounts a
+      where a.is_active and lower(a.era_category) = lower(b.era_category)
+        -- an income category only for money coming in (Era tags some spending with an income category)
+        and not (a.account_type in ('Income','Other Income') and b.amount < 0)
+      order by a.number nulls last limit 1;
+      v_how := 'era';
+    end if;
+
+    if v_gl is null then
+      v_sugg := null;
+    elsif v_trusted and abs(b.amount) <= v_limit and b.reviewed_by is null then
+      begin
+        perform public.bank_accept(b.id, null, null, jsonb_build_array(jsonb_build_object(
+          'amount', abs(b.amount), 'gl_account_id', v_gl)), null, b.merchant);
+        update public.bank_transactions set reviewed_by = 'Automatic (Era)',
+          suggestion = jsonb_build_object('gl_account_id', v_gl, 'source', v_how) where id = b.id;
+        v_added := v_added + 1;
+        continue;
+      exception when others then
+        v_sugg := jsonb_build_object('gl_account_id', v_gl, 'source', v_how);
+      end;
+    elsif v_trusted then
+      v_sugg := jsonb_build_object('gl_account_id', v_gl, 'source', v_how, 'over_limit', true);
+    else
+      v_sugg := jsonb_build_object('hint_gl_account_id', v_gl, 'source', v_how);
+    end if;
     update public.bank_transactions set suggestion = v_sugg, updated_at = now()
     where id = b.id and suggestion is distinct from v_sugg;
-    v_suggested := v_suggested + 1;
-    if r.auto_add then
-      perform public.bank_accept(b.id, r.payee_id, r.memo, jsonb_build_array(jsonb_build_object(
-        'amount', abs(b.amount), 'gl_account_id', r.gl_account_id, 'project_id', r.project_id)));
-      update public.bank_rules set times_used = times_used + 1 where id = r.id;
-      v_added := v_added + 1;
-    end if;
+    if v_sugg ? 'gl_account_id' then v_suggested := v_suggested + 1;
+    elsif v_sugg is not null then v_hinted := v_hinted + 1; end if;
   end loop;
-  return jsonb_build_object('matched', v_matched, 'added_by_rules', v_added, 'suggested', v_suggested);
+  return jsonb_build_object('matched', v_matched, 'added_by_rules', v_added, 'added', v_added,
+                            'suggested', v_suggested, 'left_for_review', v_hinted);
 end $$;
 
 -- After a sync: accounts linked with auto_value get today's value from Era (sum of their feeds' balances).

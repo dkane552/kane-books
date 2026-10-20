@@ -44,6 +44,9 @@ create unique index if not exists gl_accounts_number_key on public.gl_accounts(n
 create unique index if not exists gl_accounts_name_key on public.gl_accounts(lower(name));
 -- The Era category a category matches: bank transactions Era tagged with it arrive with this category filled in.
 alter table public.gl_accounts add column if not exists era_category text;
+-- Era's tag is reliable enough for this category to add the transaction to the books without asking (under
+-- book_settings.auto_add_limit). Off: Era's guess is only shown as a hint and the transaction waits for review.
+alter table public.gl_accounts add column if not exists era_auto boolean;
 
 -- Books set up before the personal categories (the first version had utilities, food and so on split finer,
 -- plus a Business group): clear the old categories nothing uses yet, so the list below goes in clean. Any
@@ -111,6 +114,17 @@ insert into public.gl_accounts (number, name, account_type, category_group, tax_
   ('7000','Investment and asset value changes','Other Income','Value changes',null,null),
   ('7900','Reconciliation discrepancies','Other Expense','Other',null,null)
 on conflict do nothing;
+
+-- Which Era tags are trusted to add on their own. Clear-cut ones are; broad ones (shopping, home maintenance,
+-- cash and checks, taxes and fees, gifts, side income, refunds) stay for review because the right category,
+-- or whether it is personal at all, needs a person. Only fills categories never set, so a change in
+-- Accounts > Categories sticks.
+update public.gl_accounts set era_auto = era_category in (
+  'Paychecks','Interest and dividends','Rent','Mortgage and home equity','Utilities','Groceries','Dining out',
+  'Coffee and snacks','Pets','Healthcare and pharmacy','Childcare','Vehicle expenses','Public transit',
+  'Ride shares','Entertainment and subscriptions','Health and fitness','Travel and vacation',
+  'Student loans and personal debt','Insurance','Education')
+where era_auto is null and era_category is not null;
 
 update public.book_settings s set
   default_cash_gl_id          = coalesce(s.default_cash_gl_id,          (select id from public.gl_accounts where number = '1000')),

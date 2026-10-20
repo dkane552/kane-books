@@ -20,6 +20,7 @@ import { BackupsPanel } from "./backups";
 import { SecurityPanel } from "./security";
 import { AccessibilityPanel } from "./display-settings";
 import {
+  rpc,
   useAuditLog,
   useDb,
   useGlAccounts,
@@ -116,6 +117,7 @@ function BooksPanel() {
       ledger_start_date: String(c["ledger_start_date"] ?? ""),
       bank_feed_start_date: String(c["bank_feed_start_date"] ?? ""),
       fiscal_year_start_month: String(c["fiscal_year_start_month"] ?? 1),
+      auto_add_limit: String(c["auto_add_limit"] ?? 1000),
     };
     for (const l of LINKS) next[l.key] = String(c[l.key] ?? "");
     setF(next);
@@ -150,6 +152,18 @@ function BooksPanel() {
               type="date"
               value={f["bank_feed_start_date"] ?? ""}
               onChange={(e) => setF({ ...f, bank_feed_start_date: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="Add automatically up to"
+            hint="Bank transactions bigger than this wait for you instead of being added from Era's category. Your rules are not limited."
+          >
+            <Input
+              type="number"
+              min="0"
+              step="50"
+              value={f["auto_add_limit"] ?? "1000"}
+              onChange={(e) => setF({ ...f, auto_add_limit: e.target.value })}
             />
           </Field>
           <Field label="Year starts in">
@@ -195,9 +209,13 @@ function BooksPanel() {
                 ledger_start_date: f["ledger_start_date"] || null,
                 bank_feed_start_date: f["bank_feed_start_date"] || null,
                 fiscal_year_start_month: Number(f["fiscal_year_start_month"] || 1),
+                auto_add_limit: Math.max(0, Number(f["auto_add_limit"] || 0)),
               };
               for (const l of LINKS) values[l.key] = f[l.key] || null;
               await db.update("book_settings", "1", values);
+              // A new limit changes what can be added on its own.
+              if (String(settings?.auto_add_limit ?? "") !== String(values["auto_add_limit"]))
+                await db.batch(() => rpc("bank_autoprocess", {}));
               toast.success("Settings saved");
             }}
           >
